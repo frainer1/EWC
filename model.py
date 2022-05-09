@@ -69,14 +69,3 @@ def FCNet(layer_widths, bias = False, **kwargs):
         mods.append(nn.ReLU())
     mods.append(hlinear(layer_widths[num_layers-2], layer_widths[-1], bias = bias))
     return hsequential(mods, **kwargs)
-
-"""        
-def basicNet(layer_widths, bias = False, **kwargs):
-    mods = []
-    num_layers = len(layer_widths)
-    for i in range(num_layers-2):
-        mods.append(nn.Linear(layer_widths[i], layer_widths[i+1], bias = bias))
-        mods.append(nn.ReLU())
-    mods.append(nn.Linear(layer_widths[num_layers-2], layer_widths[-1], bias = bias))
-    return nn.Sequential(mods, **kwargs)
-"""
