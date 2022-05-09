@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon May  9 00:05:09 2022
-
-@author: Flo
+@author: freedbee, https://github.com/freedbee
 """
 
 import torch
