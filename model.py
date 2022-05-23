@@ -90,11 +90,11 @@ class hsequential(nn.Sequential):
     def parameter_update_EWC(self, optimizer, X, y):
         optimizer.zero_grad()
         criterion = nn.CrossEntropyLoss()
-        loss = criterion(self(X), y) + self.task_weight*self.EWC_loss(X, y)
+        loss = criterion(self(X), y) + self.task_weight*self.EWC_loss()
         loss.backward()
         optimizer.step()
     
-    def EWC_loss(self, X, y):
+    def EWC_loss(self):
         loss = 0
         for layer in self.hmodules():
             loss += layer.ewc_loss()

@@ -96,10 +96,6 @@ def create_task(dataloader):
     return X_perm
 """
 
-"""
-
-"""
-
 num_tasks = 5
 for task in range(num_tasks):
     # train EWC model
