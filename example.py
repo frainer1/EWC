@@ -18,7 +18,7 @@ if torch.cuda.is_available():
     device = 'cuda'
 
 trainloader, testloader = dataloaders.get_dataloaders('mnist',
-                                          batch_size=1000, 
+                                          batch_size=100, 
                                           subset=False, 
                                           num_workers=0)
 
@@ -97,16 +97,20 @@ def create_task(dataloader):
 """
 
 num_tasks = 5
+m.set_task_weight(0.3)
+m.set_online_lamda(0.3)
 for task in range(num_tasks):
     # train EWC model
-    print("EWC")
+    print("mySGD")
     print("Task: ", task+1)
-    train_model(m, trainloader, epochs=5, permute=True, seed=task, device=device, method='EWC')
+    train_model(m, trainloader, epochs=5, permute=True, seed=task, device=device, method='mySGD')
+    """
     for _, (X, _) in enumerate(trainloader):
         X = permute_mnist(X, task)
         X = X.to(device)
         m.on_task_update(X)
     m.update_fisher()
+    """
     
     # train comparison model
     print("SGD")
@@ -125,7 +129,7 @@ for task in range(num_tasks):
 
     # plot accuracies
     plt.title("Test accuracy after training {} tasks".format(task+1))
-    plt.plot(np.arange(task+1)+1, accs_EWC, 'o', label="EWC")
+    plt.plot(np.arange(task+1)+1, accs_EWC, 'o', label="mySGD")
     plt.plot(np.arange(task+1)+1, accs_SGD, 'x', label="SGD")
     plt.ylabel("Test accuracy in %")
     plt.xlabel("Task")

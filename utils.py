@@ -50,7 +50,7 @@ class hlinear(nn.Linear):
                                    output_grad[0].detach()))
             
     def save_opt_params(self):
-        self.opt_weights = self.weight
+        self.opt_weights = self.weight.clone().detach()
         #self.opt_bias = self.bias
         
     def compute_fisher(self):
@@ -104,7 +104,7 @@ def test(model, device, testloader, criterion, permute=False, seed=0):
     correct = 0
     num_datapoints = 0
     for t, (X, y) in enumerate(testloader):
-        num_datapoints += y.size()[0]
+        num_datapoints += y.shape[0]
         if permute:
             X = permute_mnist(X, seed)
         X, y = X.to(device), y.to(device)

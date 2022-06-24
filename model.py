@@ -25,6 +25,9 @@ class hsequential(nn.Sequential):
         self.optimizer = optim.SGD(self.parameters(), lr=lr, momentum=0)
         self.task_weight = task_weight
     
+    def set_task_weight(self, task_weight):
+        self.task_weight = task_weight
+        
     def get_device(self):
         return next(self.parameters()).device
     
@@ -118,11 +121,10 @@ class hsequential(nn.Sequential):
         return out
     
     def on_task_update(self, X):
-        # reset update information and save optimal parameters
+        # reset update information
         for layer in self.hmodules():
             layer.input_act = None
             layer.output_grad = None
-            layer.save_opt_params()
         
         # prepare fisher update
         log_soft = torch.nn.LogSoftmax(dim=1)
@@ -141,8 +143,10 @@ class hsequential(nn.Sequential):
         
     def update_fisher(self):
         device = self.get_device()
+        # update fisher estimate and save optimal parameters
         for layer in self.hmodules():
             layer.update_fisher(device)
+            layer.save_opt_params()
                     
         
         
