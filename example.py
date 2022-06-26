@@ -13,6 +13,8 @@ from utils import test, permute_mnist
 import matplotlib.pyplot as plt
 import numpy as np
 
+import csv
+
 device = 'cpu'
 if torch.cuda.is_available():
     device = 'cuda'
@@ -49,13 +51,14 @@ n.apply(init_params)
 m.to(device)
 n.to(device)
 
-def train_model(model, dataloader, epochs=5, method='SGD', device='cpu', measure_freq=100, permute=False, seed=0):
+def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device='cpu', measure_freq=100, permute=False, seed=0):
     """
     Parameters
     ----------
     model : model.FCNet
         model to be trained
-    dataloader : torch.utils.data.DataLoader   
+    train_loader : torch.utils.data.DataLoader   
+    test_loader : torch.utils.data.DataLoader   
     epochs : int, optional
         number of epochs the model is trained. The default is 5.
     method : string, optional
@@ -106,16 +109,26 @@ task_weights = [10]
 on_lamdas = [1]
 #on_lamdas = task_weights
 
-
 """
 for task in range(num_tasks):
     # train comparison model
     print("SGD")
     print("Task: ", task+1)
     train_model(n, trainloader, epochs=5, permute=True, seed=task, device=device, method='SGD')
-"""
     
-accs_EWC = np.ones(10)
+    accs_SGD = []
+    for t in range(task+1):   
+        print("Testerror task {}, method: {}".format(t+1, n.method))
+        accs_SGD.append(test(n, device, testloader, criterion, permute=True, seed=t))
+    
+    with open("SGD_accs.csv", 'a') as csvfile:
+        # creating a csv writer object  
+        csvwriter = csv.writer(csvfile)
+        
+        csvwriter.writerow(accs_SGD)
+        csvfile.close()
+"""
+
 for tw in task_weights:
     for lamda in on_lamdas:
         m.set_task_weight(tw)
@@ -124,38 +137,41 @@ for tw in task_weights:
             # train EWC model
             print("EWC")
             print("Task: ", task+1)
-            train_model(m, trainloader, epochs=2, permute=True, seed=task, device=device, method='EWC')
+            train_model(m, trainloader, testloader, epochs=2, permute=True, seed=task, device=device, method='EWC')
             for _, (X, _) in enumerate(trainloader):
                 X = permute_mnist(X, task)
                 X = X.to(device)
                 m.full_fisher_estimate(X)
                 # m.mc_fisher_estimate(X)
             m.update_fisher()
-                   
-            # train comparison model
-            print("SGD")
-            print("Task: ", task+1)
-            train_model(n, trainloader, epochs=2, permute=True, seed=task, device=device, method='SGD')
             
             # testing models on all previous tasks
             accs_EWC = []
             accs_SGD = []
+            with open("SGD_accs.csv", "r") as csvfile:
+                csvreader = csv.reader(csvfile)
+                for row in csvreader:
+                    accs_SGD.append(row)
+                
+                csvfile.close()
+            
             for t in range(task+1):
                 print("Testerror task {}, method: {}".format(t+1, m.method))
                 accs_EWC.append(test(m, device, testloader, criterion, permute=True, seed=t))
                 
                 print("Testerror task {}, method: {}".format(t+1, n.method))
-                accs_SGD.append(test(n, device, testloader, criterion, permute=True, seed=t))
+                print(accs_SGD[t])
         
             # plot accuracies
             plt.figure()
             plt.title("Test accuracy after training {} tasks with tw {} and lambda {}".format(task+1, tw, lamda))
             plt.plot(np.arange(task+1)+1, accs_EWC, 'o', label="EWC")
-            plt.plot(np.arange(task+1)+1, accs_SGD, 'x', label="SGD")
+            plt.plot(np.arange(task+1)+1, accs_SGD[task], 'x', label="SGD")
             plt.ylabel("Test accuracy in %")
             plt.xlabel("Task")
             plt.legend()
             plt.savefig("tasks{}_tw{}_l{}.png".format(task+1, tw, lamda))
+
 
 """
 import matplotlib.pyplot as plt    

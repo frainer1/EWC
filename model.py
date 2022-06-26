@@ -8,6 +8,7 @@ Created on Fri May  6 14:14:50 2022
 import torch
 import torch.nn as nn
 from utils import hlinear
+from utils import hConv2d
 import numpy as np
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
@@ -175,6 +176,46 @@ class hsequential(nn.Sequential):
                 
 def FCNet(layer_widths, bias = False, **kwargs):
     mods = []
+    num_layers = len(layer_widths)
+    for i in range(num_layers-2):
+        mods.append(hlinear(layer_widths[i], layer_widths[i+1], bias = bias))
+        mods.append(nn.ReLU())
+    mods.append(hlinear(layer_widths[num_layers-2], layer_widths[-1], bias = bias))
+    return hsequential(mods, **kwargs)
+
+
+def CNN(in_channel, out_channels, kernel_sizes, layer_widths, paddings = None, dilations=None, strides=None, poolings=None, bias = False, **kwargs):
+    mods = []
+    
+    """
+    specify convolutional layers
+    """
+    inc = None
+    for i in range(len(out_channels)):
+        dil = 1, 
+        s = 1, 
+        pad = 0
+        if not dilations is None:
+            dil = dilations[i]
+        if not strides is None:
+            s = strides[i]
+        if not paddings is None:
+            pad = paddings[i]
+        if inc is None:
+            inc = in_channel
+        else:
+            inc = out_channels[i-1]
+        out = out_channels[i]
+        kern = kernel_sizes[i]
+        mods.append(hConv2d(inc, out, kern, stride=s, padding=pad, dilation=dil, bias=bias))
+        mods.append(nn.ReLU())
+        if not poolings is None and poolings[i]:
+            mods.append(nn.MaxPool2d(2, 2))
+            
+    """
+    specify fc-layers
+    """
+    mods.append(nn.Flatten())
     num_layers = len(layer_widths)
     for i in range(num_layers-2):
         mods.append(hlinear(layer_widths[i], layer_widths[i+1], bias = bias))

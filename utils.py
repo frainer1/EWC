@@ -7,34 +7,13 @@ Created on Fri May  6 14:20:45 2022
 
 import torch
 import torch.nn as nn
-    
+from torch.nn import Conv2d
+
 class hLayer(nn.Module):
     def __init__(self):
-        
-
-class hlinear(nn.Linear):
-    """
-    linear layer with registered hooks for activation and gradient manipulation
-    """
-    def __init__(self, in_features, out_features, bias=False):
-        super().__init__(in_features, out_features, bias)
         self.register_hooks()
-        
-        self.in_features = in_features
-        self.out_features = out_features   
-        self.bias_used = bias
-        
         self.input_act = None
         self.output_grad = None
-            
-        self.register_buffer('opt_weights', torch.zeros(out_features, in_features))
-        self.register_buffer('opt_bias', torch.zeros(out_features, 1))
-        
-        if bias:
-            self.in_features += 1 # one extra column to store fisher regarding biases
-            
-        self.register_buffer('fisher', torch.zeros(self.in_features, out_features))
-        self.register_buffer('new_fisher', torch.zeros(self.in_features, out_features))
         
     def register_hooks(self):
         self.register_full_backward_hook(self._backward_hook)
@@ -56,6 +35,29 @@ class hlinear(nn.Linear):
         else:
             self.output_grad = torch.cat((self.output_grad, 
                                    output_grad[0].detach()))
+
+
+class hlinear(nn.Linear):
+    """
+    linear layer with registered hooks for activation and gradient manipulation
+    """
+    def __init__(self, in_features, out_features, bias=False):
+        super().__init__(in_features, out_features, bias)
+        
+        self.in_features = in_features
+        self.out_features = out_features   
+        self.bias_used = bias
+            
+        self.register_buffer('opt_weights', torch.zeros(out_features, in_features))
+        self.register_buffer('opt_bias', torch.zeros(out_features, 1))
+        
+        if bias:
+            self.in_features += 1 # one extra column to store fisher regarding biases
+            
+        self.register_buffer('fisher', torch.zeros(self.in_features, out_features))
+        self.register_buffer('new_fisher', torch.zeros(self.in_features, out_features))
+        
+    
             
     def save_opt_params(self):
         self.opt_weights = self.weight.clone().detach()
@@ -127,12 +129,27 @@ class hlinear(nn.Linear):
         self.weight -= self.lr*self.update
         self.weight.requires_grad_(True)
         
-class hConv2d(torch.nn.Conv2d):
+class hConv2d(Conv2d, hLayer):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, 
-            dilation=1, groups=1, bias=True, padding_mode='zeros', nonlinearity='relu'):
+            dilation=1, groups=1, bias=False, padding_mode='zeros', nonlinearity='relu'):
         self.nonlinearity = nonlinearity
-        super(hConv2d, self).__init__(in_channels, out_channels, kernel_size, stride=stride, padding=padding, 
+        Conv2d.__init__(in_channels, out_channels, kernel_size, stride=stride, padding=padding, 
             dilation=dilation, groups=groups, bias=bias, padding_mode=padding_mode)
+        hLayer.__init__(self)
+        
+        self.unfold = torch.nn.Unfold(kernel_size, stride=stride, padding=padding)
+        
+    def compute_fisher(self):
+        acts = self.unfold(self.input_act).transpose(1,2)
+        print("acts: ", acts.shape)
+        grads = self.output_grad.view(self.output_grad.shape[0], 
+                                         self.output_grad.shape[1], -1)
+        print("grads: ", grads.shape)
+        ag = grads.bmm(acts)
+        ag = ag.view(self.input_act.shape[0], -1)
+        
+        print("ag: ", ag.shape)
+        self.new_fisher = torch.mm(ag, ag.t())
         
     
 
