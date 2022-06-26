@@ -7,6 +7,10 @@ Created on Fri May  6 14:20:45 2022
 
 import torch
 import torch.nn as nn
+    
+class hLayer(nn.Module):
+    def __init__(self):
+        
 
 class hlinear(nn.Linear):
     """
@@ -18,15 +22,19 @@ class hlinear(nn.Linear):
         
         self.in_features = in_features
         self.out_features = out_features   
+        self.bias_used = bias
         
         self.input_act = None
         self.output_grad = None
-        
-        # no biases yet
+            
         self.register_buffer('opt_weights', torch.zeros(out_features, in_features))
-        #self.register_buffer('opt_bias', torch.zeros(in_features, out_features))
-        self.register_buffer('fisher', torch.zeros(in_features, out_features))
-        self.register_buffer('new_fisher', torch.zeros(in_features, out_features))
+        self.register_buffer('opt_bias', torch.zeros(out_features, 1))
+        
+        if bias:
+            self.in_features += 1 # one extra column to store fisher regarding biases
+            
+        self.register_buffer('fisher', torch.zeros(self.in_features, out_features))
+        self.register_buffer('new_fisher', torch.zeros(self.in_features, out_features))
         
     def register_hooks(self):
         self.register_full_backward_hook(self._backward_hook)
@@ -51,44 +59,66 @@ class hlinear(nn.Linear):
             
     def save_opt_params(self):
         self.opt_weights = self.weight.clone().detach()
-        #self.opt_bias = self.bias
+        if self.bias_used:
+            self.opt_bias = self.bias.clone().detach()
         
     def compute_fisher(self):
         """
         computes current estimate of the Fisher information
         
-        function is called in model.hsquential.on_task_update, grads therefore correspond to d/dw -1/batchsize * sum_x(prob(y|x) * log_prob(y|x))
+        function is called in model.hsquential.full_fisher_estimate, grads therefore correspond to d/dw -1/batchsize * sum_x(prob(y|x) * log_prob(y|x))
         """
         batchsize = int(self.input_act.shape[0] / self.labels)
         for label in range(self.labels):
             acts = self.input_act[(batchsize*label):(batchsize*(label+1))]
-            acts2 = torch.mul(acts, acts)
             grads = self.output_grad[(batchsize*label):(batchsize*(label+1))]
+            acts2 = torch.mul(acts, acts)
             grads2 = torch.mul(grads, grads)
-            self.new_fisher += acts2.t() @ grads2
+            if self.bias_used:
+                #print("before: ", self.new_fisher.shape)
+                self.new_fisher[:self.in_features-1] += acts2.t() @ grads2
+                #print("between: ", self.new_fisher.shape)
+                self.new_fisher[self.in_features-1] += torch.sum(grads2, dim=0)/batchsize
+                #print("after: ", self.new_fisher.shape)
+                
+                #summed_grads = torch.sum(grads2, dim=0)
+                #print("grads:", grads2.shape)
+                #print("proc: ", summed_grads.shape)
+            else:
+                self.new_fisher += acts2.t() @ grads2
+                
     
     def update_fisher(self, device):
         """
         update running average of the fisher information
         called on task update, after all batches have been processed
         """
-        self.fisher = self.online_lamda*self.fisher + self.new_fisher
+        self.fisher = self.online_lambda*self.fisher + self.new_fisher
         #reset buffer
         self.new_fisher = torch.zeros(self.in_features, self.out_features).to(device)
         
+        #print("opt bias: ", self.opt_bias.shape)
+        #print("bias: ", self.bias.shape)
         
     def ewc_loss(self):
         """
         computes and returns sum_i (F_i * (theta_i - theta_i_opt)**2)
         """
-        param_diff = self.weight - self.opt_weights
+        param_diff = self.weight.clone().detach() - self.opt_weights.clone()
+        if self.bias_used:
+            bias_diff = self.bias.clone().detach().reshape(-1, 1) - self.opt_bias.clone()
+            #print("bias:", bias_diff.shape)
+            #print("before: ", param_diff.shape)
+            param_diff = torch.cat((param_diff, bias_diff), dim=1)
+            #print("after: ", param_diff.shape)
+            
         param_diff_2 = torch.mul(param_diff, param_diff)
         loss_M = torch.mul(self.fisher.t(), param_diff_2)
         return torch.sum(loss_M, dim = [0, 1])
     
     def sgd_update(self):
         """
-        vanilla SGD update: theta_new = theta_old - lamda*dL/dtheta
+        vanilla SGD update: theta_new = theta_old - lambda*dL/dtheta
         """
         
         self.weight.requires_grad_(False)
@@ -97,7 +127,16 @@ class hlinear(nn.Linear):
         self.weight -= self.lr*self.update
         self.weight.requires_grad_(True)
         
+class hConv2d(torch.nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, 
+            dilation=1, groups=1, bias=True, padding_mode='zeros', nonlinearity='relu'):
+        self.nonlinearity = nonlinearity
+        super(hConv2d, self).__init__(in_channels, out_channels, kernel_size, stride=stride, padding=padding, 
+            dilation=dilation, groups=groups, bias=bias, padding_mode=padding_mode)
         
+    
+
+    
 
 def test(model, device, testloader, criterion, permute=False, seed=0):
     test_loss = 0

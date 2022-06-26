@@ -10,9 +10,10 @@ import torch.nn as nn
 from utils import hlinear
 import numpy as np
 import torch.optim as optim
+from torch.distributions.categorical import Categorical
 
 class hsequential(nn.Sequential):
-    def __init__(self, module_list, method="SGD", lr=1e-2, output_dim = 10, online_lamda = 0.9, task_weight = 0.95):
+    def __init__(self, module_list, method="SGD", lr=1e-2, output_dim = 10, online_lambda = 0.9, task_weight = 0.95):
         """
         online_lamda: weight used for computing running average of Fisher, i.e. F_i = online_lamda * F_i-1 + F_i 
         """
@@ -21,7 +22,7 @@ class hsequential(nn.Sequential):
         self.set_method(method)
         self.set_lr(lr)
         self.set_output_dim(output_dim)
-        self.set_online_lamda(online_lamda)
+        self.set_online_lambda(online_lambda)
         self.optimizer = optim.SGD(self.parameters(), lr=lr, momentum=0)
         self.task_weight = task_weight
     
@@ -36,10 +37,10 @@ class hsequential(nn.Sequential):
         for layer in self.hmodules():
             layer.method = self.method
     
-    def set_online_lamda(self, lamda):
-        self.online_lamda = lamda
+    def set_online_lambda(self, lamda):
+        self.online_lambda = lamda
         for layer in self.hmodules():
-            layer.online_lamda = lamda
+            layer.online_lambda = lamda
             
     def set_lr(self, lr):
         self.lr = lr
@@ -120,7 +121,10 @@ class hsequential(nn.Sequential):
                 out.append(mod)
         return out
     
-    def on_task_update(self, X):
+    def full_fisher_estimate(self, X):
+        """
+        computes "full" fisher as opposed to MC version
+        """
         # reset update information
         for layer in self.hmodules():
             layer.input_act = None
@@ -140,6 +144,26 @@ class hsequential(nn.Sequential):
         # compute current fisher estimate
         for layer in self.hmodules():
             layer.compute_fisher()
+            
+    def mc_fisher_estimate(self, X):
+        """
+        computes fisher update by drawing one label per datapoint from model distribution 
+        """
+        # reset update information
+        for layer in self.hmodules():
+            layer.input_act = None
+            layer.output_grad = None
+        
+        criterion = nn.CrossEntropyLoss(reduction="sum")
+        output = self(X)
+        labels = Categorical(logits=output).sample()
+        loss = criterion(output, labels) / torch.sqrt(torch.tensor(1.0*X.shape[0]))
+        loss.backward()
+        self.zero_grad()
+        
+        # compute current fisher estimate
+        for layer in self.hmodules():
+            layer.compute_fisher()
         
     def update_fisher(self):
         device = self.get_device()
@@ -148,8 +172,7 @@ class hsequential(nn.Sequential):
             layer.update_fisher(device)
             layer.save_opt_params()
                     
-        
-        
+                
 def FCNet(layer_widths, bias = False, **kwargs):
     mods = []
     num_layers = len(layer_widths)

@@ -22,15 +22,31 @@ trainloader, testloader = dataloaders.get_dataloaders('mnist',
                                           subset=False, 
                                           num_workers=0)
 
-layer_widths = [28*28, 200, 200, 10]
+layer_widths = [28*28, 50, 50, 10]
 criterion = torch.nn.CrossEntropyLoss()
 
 # EWC model
-m = model.FCNet(layer_widths)
-m.to(device)
+m = model.FCNet(layer_widths, bias=False)
+
 
 # SGD model for comparison
-n = model.FCNet(layer_widths)
+n = model.FCNet(layer_widths, bias=False)
+
+"""
+initialize both networks with the same values
+
+init_params(m) taken from https://stackoverflow.com/questions/49433936/how-to-initialize-weights-in-pytorch 
+"""
+def init_params(m):
+    torch.manual_seed(0)
+    if isinstance(m, torch.nn.Linear):
+        torch.nn.init.xavier_uniform_(m.weight)
+        #m.bias.data.fill_(0.01)
+        
+m.apply(init_params)
+n.apply(init_params)
+
+m.to(device)
 n.to(device)
 
 def train_model(model, dataloader, epochs=5, method='SGD', device='cpu', measure_freq=100, permute=False, seed=0):
@@ -62,7 +78,7 @@ def train_model(model, dataloader, epochs=5, method='SGD', device='cpu', measure
     model.set_method(method)
     
     for epoch in range(epochs):
-        print('\n\nEpoch', epoch)
+        print('\n\nEpoch', epoch+1)
         for t, (X, y) in enumerate(trainloader):
             if permute:
                 X = permute_mnist(X, seed)
@@ -82,60 +98,64 @@ def train_model(model, dataloader, epochs=5, method='SGD', device='cpu', measure
             model.parameter_update(X, y)
                             
         test(model, device, testloader, criterion, permute, seed)
-    
-"""
-# not used
 
-def create_task(dataloader):
-    X_perm = None
-    for _, (X, _) in enumerate(dataloader):
-        if X_perm is None:
-            X_perm = permute_mnist(X, 0)
-        else:    
-            X_perm = torch.cat((X_perm, permute_mnist(X, 0)))
-    return X_perm
-"""
+num_tasks = 10
 
-num_tasks = 5
-m.set_task_weight(0.3)
-m.set_online_lamda(0.3)
+#task_weights = [0.1, 0.25, 0.5, 0.75, 1, 10]
+task_weights = [10]
+on_lamdas = [1]
+#on_lamdas = task_weights
+
+
+"""
 for task in range(num_tasks):
-    # train EWC model
-    print("mySGD")
-    print("Task: ", task+1)
-    train_model(m, trainloader, epochs=5, permute=True, seed=task, device=device, method='mySGD')
-    """
-    for _, (X, _) in enumerate(trainloader):
-        X = permute_mnist(X, task)
-        X = X.to(device)
-        m.on_task_update(X)
-    m.update_fisher()
-    """
-    
     # train comparison model
     print("SGD")
     print("Task: ", task+1)
     train_model(n, trainloader, epochs=5, permute=True, seed=task, device=device, method='SGD')
+"""
     
-    # testing models on all previous tasks
-    accs_EWC = []
-    accs_SGD = []
-    for t in range(task+1):
-        print("Testerror task {}, method: {}".format(t+1, m.method))
-        accs_EWC.append(test(m, device, testloader, criterion, permute=True, seed=t))
+accs_EWC = np.ones(10)
+for tw in task_weights:
+    for lamda in on_lamdas:
+        m.set_task_weight(tw)
+        m.set_online_lambda(lamda)
+        for task in range(num_tasks):
+            # train EWC model
+            print("EWC")
+            print("Task: ", task+1)
+            train_model(m, trainloader, epochs=2, permute=True, seed=task, device=device, method='EWC')
+            for _, (X, _) in enumerate(trainloader):
+                X = permute_mnist(X, task)
+                X = X.to(device)
+                m.full_fisher_estimate(X)
+                # m.mc_fisher_estimate(X)
+            m.update_fisher()
+                   
+            # train comparison model
+            print("SGD")
+            print("Task: ", task+1)
+            train_model(n, trainloader, epochs=2, permute=True, seed=task, device=device, method='SGD')
+            
+            # testing models on all previous tasks
+            accs_EWC = []
+            accs_SGD = []
+            for t in range(task+1):
+                print("Testerror task {}, method: {}".format(t+1, m.method))
+                accs_EWC.append(test(m, device, testloader, criterion, permute=True, seed=t))
+                
+                print("Testerror task {}, method: {}".format(t+1, n.method))
+                accs_SGD.append(test(n, device, testloader, criterion, permute=True, seed=t))
         
-        print("Testerror task {}, method: {}".format(t+1, n.method))
-        accs_SGD.append(test(n, device, testloader, criterion, permute=True, seed=t))
-
-    # plot accuracies
-    plt.title("Test accuracy after training {} tasks".format(task+1))
-    plt.plot(np.arange(task+1)+1, accs_EWC, 'o', label="mySGD")
-    plt.plot(np.arange(task+1)+1, accs_SGD, 'x', label="SGD")
-    plt.ylabel("Test accuracy in %")
-    plt.xlabel("Task")
-    plt.legend()
-    plt.show()
-
+            # plot accuracies
+            plt.figure()
+            plt.title("Test accuracy after training {} tasks with tw {} and lambda {}".format(task+1, tw, lamda))
+            plt.plot(np.arange(task+1)+1, accs_EWC, 'o', label="EWC")
+            plt.plot(np.arange(task+1)+1, accs_SGD, 'x', label="SGD")
+            plt.ylabel("Test accuracy in %")
+            plt.xlabel("Task")
+            plt.legend()
+            plt.savefig("tasks{}_tw{}_l{}.png".format(task+1, tw, lamda))
 
 """
 import matplotlib.pyplot as plt    
