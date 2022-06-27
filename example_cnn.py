@@ -54,7 +54,7 @@ def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device
         print('\n\nEpoch', epoch+1)
         for t, (X, y) in enumerate(trainloader):
             if permute:
-                X = permute_mnist(X, seed)
+                X = permute_mnist(X, seed).reshape(-1, 1, 28, 28)
             X = X.to(device)
             y = y.to(device)
             
@@ -72,6 +72,20 @@ def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device
                             
         test(model, device, testloader, criterion, permute, seed)
 
+"""
+first = True
+for _, (X, _) in enumerate(trainloader):
+    if not first:
+        continue
+    X = permute_mnist(X, 0).reshape(-1, 1, 28, 28)
+    f, axarr = plt.subplots(2,2)
+    axarr[0,0].imshow(X[1, 0], cmap="gray")
+    axarr[0,1].imshow(X[2, 0], cmap="gray")
+    axarr[1,0].imshow(X[3, 0], cmap="gray")
+    axarr[1,1].imshow(X[4, 0], cmap="gray")
+    np.vectorize(lambda ax:ax.axis('off'))(axarr);
+    first = False
+"""
 
 in_channel = 1
 out_channels = [10, 20]
@@ -85,6 +99,11 @@ m.to(device)
 
 num_tasks = 1
 for task in range(num_tasks):
-    train_model(m, trainloader, testloader, device=device)
-    
+    train_model(m, trainloader, testloader, epochs=1, device=device, permute=True, seed=task, method="EWC")
+    for _, (X, _) in enumerate(trainloader):
+        X = permute_mnist(X, task).reshape(-1, 1, 28, 28)
+        X = X.to(device)
+        #m.full_fisher_estimate(X)
+        m.mc_fisher_estimate(X)
+    m.update_fisher()
 

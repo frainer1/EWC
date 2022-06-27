@@ -105,8 +105,8 @@ def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device
 num_tasks = 10
 
 #task_weights = [0.1, 0.25, 0.5, 0.75, 1, 10]
-task_weights = [10]
-on_lamdas = [1]
+task_weights = [1]
+on_lamdas = [0.4]
 #on_lamdas = task_weights
 
 """
@@ -137,12 +137,12 @@ for tw in task_weights:
             # train EWC model
             print("EWC")
             print("Task: ", task+1)
-            train_model(m, trainloader, testloader, epochs=2, permute=True, seed=task, device=device, method='EWC')
+            train_model(m, trainloader, testloader, epochs=1, permute=True, seed=task, device=device, method='EWC')
             for _, (X, _) in enumerate(trainloader):
                 X = permute_mnist(X, task)
                 X = X.to(device)
-                m.full_fisher_estimate(X)
-                # m.mc_fisher_estimate(X)
+                #m.full_fisher_estimate(X)
+                m.mc_fisher_estimate(X)
             m.update_fisher()
             
             # testing models on all previous tasks
@@ -151,7 +151,10 @@ for tw in task_weights:
             with open("SGD_accs.csv", "r") as csvfile:
                 csvreader = csv.reader(csvfile)
                 for row in csvreader:
-                    accs_SGD.append(row)
+                    l = []
+                    for r in row:
+                        l.append(float(r))
+                    accs_SGD.append(l)
                 
                 csvfile.close()
             
@@ -160,7 +163,7 @@ for tw in task_weights:
                 accs_EWC.append(test(m, device, testloader, criterion, permute=True, seed=t))
                 
                 print("Testerror task {}, method: {}".format(t+1, n.method))
-                print(accs_SGD[t])
+                print("accuracy: ", accs_SGD[task][t])
         
             # plot accuracies
             plt.figure()
@@ -170,7 +173,7 @@ for tw in task_weights:
             plt.ylabel("Test accuracy in %")
             plt.xlabel("Task")
             plt.legend()
-            plt.savefig("tasks{}_tw{}_l{}.png".format(task+1, tw, lamda))
+            plt.savefig("mc_tw{}_l{}_tasks{}.png".format(tw, lamda, task+1))
 
 
 """

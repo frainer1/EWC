@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Jun 27 00:03:24 2022
-
-@author: HP
+@author: freedbee, https://github.com/freedbee
 """
 
 import torch
@@ -18,14 +16,23 @@ def get_dataloaders(dataset, batch_size=100, subset=False, num_workers=0):
         - 'subset' determines whether a subset of 1000 trainining images is used.
             If 'subset'is true, the batch_size is adjusted to 1000 automatically.
     """
-
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
+    transform_train = transform
+    transform_test = transform
     if dataset == 'mnist':
-        trainset = datasets.MNIST('../pytorch_data', train=True, download=True)
-        testset = datasets.MNIST('../pytorch_data', train=False)
+        trainset = datasets.MNIST('../pytorch_data', train=True, download=True,
+                            transform=transform_train)
+        testset = datasets.MNIST('../pytorch_data', train=False,
+                            transform=transform_test)
     if dataset == 'fashion':
-        trainset = datasets.FashionMNIST('../pytorch_data', train=True, download=True)
+        trainset = datasets.FashionMNIST('../pytorch_data', train=True, download=True,
+                            transform=transform_train)
 
-        testset = datasets.FashionMNIST('../pytorch_data', train=False)
+        testset = datasets.FashionMNIST('../pytorch_data', train=False,
+                            transform=transform_test)
     if subset:
         h = 1000
         trainset, _ = torch.utils.data.random_split(trainset, [h,59000], generator=torch.Generator().manual_seed(42))

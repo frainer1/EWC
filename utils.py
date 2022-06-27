@@ -8,6 +8,7 @@ Created on Fri May  6 14:20:45 2022
 import torch
 import torch.nn as nn
 from torch.nn import Conv2d
+from torch.nn import Linear
 
 class hLayer(nn.Module):
     def __init__(self):
@@ -37,12 +38,16 @@ class hLayer(nn.Module):
                                    output_grad[0].detach()))
 
 
-class hlinear(nn.Linear):
+class hlinear(Linear):
     """
     linear layer with registered hooks for activation and gradient manipulation
     """
     def __init__(self, in_features, out_features, bias=False):
-        super().__init__(in_features, out_features, bias)
+        Linear.__init__(self, in_features, out_features, bias=bias)
+        
+        self.register_hooks()
+        self.input_act = None
+        self.output_grad = None
         
         self.in_features = in_features
         self.out_features = out_features   
@@ -57,7 +62,26 @@ class hlinear(nn.Linear):
         self.register_buffer('fisher', torch.zeros(self.in_features, out_features))
         self.register_buffer('new_fisher', torch.zeros(self.in_features, out_features))
         
+    def register_hooks(self):
+        self.register_full_backward_hook(self._backward_hook)
+        self.register_forward_hook(self._forward_hook)
+        
+        self.forward_hook = True
     
+    def _forward_hook(self, module, input_act, output_act):
+        if(self.forward_hook):
+            if self.input_act is None:
+                self.input_act = input_act[0].detach()
+            else:
+                self.input_act = torch.cat((self.input_act, 
+                                                        input_act[0].detach()))
+        
+    def _backward_hook(self, module, input_grad, output_grad):
+        if self.output_grad is None:
+            self.output_grad = output_grad[0].detach()
+        else:
+            self.output_grad = torch.cat((self.output_grad, 
+                                   output_grad[0].detach()))
             
     def save_opt_params(self):
         self.opt_weights = self.weight.clone().detach()
@@ -99,16 +123,16 @@ class hlinear(nn.Linear):
         #reset buffer
         self.new_fisher = torch.zeros(self.in_features, self.out_features).to(device)
         
-        #print("opt bias: ", self.opt_bias.shape)
-        #print("bias: ", self.bias.shape)
-        
     def ewc_loss(self):
         """
         computes and returns sum_i (F_i * (theta_i - theta_i_opt)**2)
         """
-        param_diff = self.weight.clone().detach() - self.opt_weights.clone()
+        param_diff = self.weight - self.opt_weights
+        #if(torch.sum(param_diff) > 10):
+        #    print(self.in_features)
+        #    print("diff: ", torch.sum(param_diff))
         if self.bias_used:
-            bias_diff = self.bias.clone().detach().reshape(-1, 1) - self.opt_bias.clone()
+            bias_diff = self.bias.view(-1, 1) - self.opt_bias
             #print("bias:", bias_diff.shape)
             #print("before: ", param_diff.shape)
             param_diff = torch.cat((param_diff, bias_diff), dim=1)
@@ -116,7 +140,7 @@ class hlinear(nn.Linear):
             
         param_diff_2 = torch.mul(param_diff, param_diff)
         loss_M = torch.mul(self.fisher.t(), param_diff_2)
-        return torch.sum(loss_M, dim = [0, 1])
+        return torch.sum(loss_M)
     
     def sgd_update(self):
         """
@@ -129,16 +153,41 @@ class hlinear(nn.Linear):
         self.weight -= self.lr*self.update
         self.weight.requires_grad_(True)
         
-class hConv2d(Conv2d, hLayer):
+class hConv2d(Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, 
             dilation=1, groups=1, bias=False, padding_mode='zeros', nonlinearity='relu'):
         self.nonlinearity = nonlinearity
-        Conv2d.__init__(in_channels, out_channels, kernel_size, stride=stride, padding=padding, 
+        Conv2d.__init__(self, in_channels, out_channels, kernel_size, stride=stride, padding=padding, 
             dilation=dilation, groups=groups, bias=bias, padding_mode=padding_mode)
-        hLayer.__init__(self)
         
+        self.register_hooks()
+        self.input_act = None
+        self.output_grad = None
+        
+        print(self.weight.shape)
         self.unfold = torch.nn.Unfold(kernel_size, stride=stride, padding=padding)
         
+    def register_hooks(self):
+        self.register_full_backward_hook(self._backward_hook)
+        self.register_forward_hook(self._forward_hook)
+        
+        self.forward_hook = True
+    
+    def _forward_hook(self, module, input_act, output_act):
+        if(self.forward_hook):
+            if self.input_act is None:
+                self.input_act = input_act[0].detach()
+            else:
+                self.input_act = torch.cat((self.input_act, 
+                                                        input_act[0].detach()))
+        
+    def _backward_hook(self, module, input_grad, output_grad):
+        if self.output_grad is None:
+            self.output_grad = output_grad[0].detach()
+        else:
+            self.output_grad = torch.cat((self.output_grad, 
+                                   output_grad[0].detach()))
+    
     def compute_fisher(self):
         acts = self.unfold(self.input_act).transpose(1,2)
         print("acts: ", acts.shape)
@@ -151,9 +200,9 @@ class hConv2d(Conv2d, hLayer):
         print("ag: ", ag.shape)
         self.new_fisher = torch.mm(ag, ag.t())
         
-    
-
-    
+    def ewc_loss(self):
+        return 0
+           
 
 def test(model, device, testloader, criterion, permute=False, seed=0):
     test_loss = 0
@@ -178,6 +227,7 @@ def test(model, device, testloader, criterion, permute=False, seed=0):
     return 100. * correct / num_datapoints
             
 def permute_mnist(data, seed):
+    data = data.view(-1, 28*28)
     torch.manual_seed(seed)
     h = w = 28
     indx = torch.randperm(h*w)

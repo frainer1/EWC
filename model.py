@@ -24,7 +24,7 @@ class hsequential(nn.Sequential):
         self.set_lr(lr)
         self.set_output_dim(output_dim)
         self.set_online_lambda(online_lambda)
-        self.optimizer = optim.SGD(self.parameters(), lr=lr, momentum=0)
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.task_weight = task_weight
     
     def set_task_weight(self, task_weight):
@@ -95,8 +95,10 @@ class hsequential(nn.Sequential):
     def parameter_update_EWC(self, optimizer, X, y):
         optimizer.zero_grad()
         criterion = nn.CrossEntropyLoss()
+        X.requires_grad_(True)
         loss = criterion(self(X), y) + self.task_weight*self.EWC_loss()
         loss.backward()
+        X.requires_grad_(False)
         optimizer.step()
     
     def EWC_loss(self):
@@ -113,12 +115,12 @@ class hsequential(nn.Sequential):
     
     def hmodules(self):
         """
-        returns a list of all hooked linear layers in the model
+        returns a list of all hooked layers in the model
         """
         
         out = []
         for mod in self.modules():
-            if isinstance(mod, hlinear):
+            if isinstance(mod, hlinear) or isinstance(mod, hConv2d):
                 out.append(mod)
         return out
     
@@ -134,12 +136,16 @@ class hsequential(nn.Sequential):
         # prepare fisher update
         log_soft = torch.nn.LogSoftmax(dim=1)
         for label in range(self.output_dim):
+            X.requires_grad_(True)
             output = self(X)            
             probs = torch.nn.functional.softmax(output, dim=1).detach()
             log_probs = log_soft(output)
             weights = torch.sqrt(probs[:, label])
             loss = -torch.dot(weights, log_probs[:, label]) / np.sqrt(X.shape[0])
+            if loss > 1e5:
+                print("ffe loss: ", loss)
             loss.backward()
+            X.requires_grad_(False)
             self.zero_grad()
             
         # compute current fisher estimate
@@ -156,10 +162,12 @@ class hsequential(nn.Sequential):
             layer.output_grad = None
         
         criterion = nn.CrossEntropyLoss(reduction="sum")
+        X.requires_grad_(True)
         output = self(X)
         labels = Categorical(logits=output).sample()
         loss = criterion(output, labels) / torch.sqrt(torch.tensor(1.0*X.shape[0]))
         loss.backward()
+        X.requires_grad_(False)
         self.zero_grad()
         
         # compute current fisher estimate
