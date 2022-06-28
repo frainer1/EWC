@@ -11,6 +11,9 @@ from torch.nn import Conv2d
 from torch.nn import Linear
 
 class hLayer(nn.Module):
+    """
+    not used currently
+    """
     def __init__(self):
         self.register_hooks()
         self.input_act = None
@@ -88,14 +91,13 @@ class hlinear(Linear):
         if self.bias_used:
             self.opt_bias = self.bias.clone().detach()
         
-    def compute_fisher(self):
+    def compute_fisher(self, batchsize, labels):
         """
         computes current estimate of the Fisher information
         
         function is called in model.hsquential.full_fisher_estimate, grads therefore correspond to d/dw -1/batchsize * sum_x(prob(y|x) * log_prob(y|x))
         """
-        batchsize = int(self.input_act.shape[0] / self.labels)
-        for label in range(self.labels):
+        for label in range(labels):
             acts = self.input_act[(batchsize*label):(batchsize*(label+1))]
             grads = self.output_grad[(batchsize*label):(batchsize*(label+1))]
             acts2 = torch.mul(acts, acts)
@@ -155,17 +157,27 @@ class hlinear(Linear):
         
 class hConv2d(Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, 
-            dilation=1, groups=1, bias=False, padding_mode='zeros', nonlinearity='relu'):
-        self.nonlinearity = nonlinearity
+            dilation=1, groups=1, bias=False):
         Conv2d.__init__(self, in_channels, out_channels, kernel_size, stride=stride, padding=padding, 
-            dilation=dilation, groups=groups, bias=bias, padding_mode=padding_mode)
+            dilation=dilation, groups=groups, bias=bias)
         
         self.register_hooks()
         self.input_act = None
         self.output_grad = None
+        self.bias_used = bias
         
-        print(self.weight.shape)
-        self.unfold = torch.nn.Unfold(kernel_size, stride=stride, padding=padding)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        
+        self.register_buffer('opt_weights', torch.zeros(out_channels, in_channels, kernel_size, kernel_size))
+        self.register_buffer('opt_bias', torch.zeros(out_channels, 1))
+        
+        self.unfold = torch.nn.Unfold(kernel_size=kernel_size, stride=stride[0], padding=padding)
+        
+        self.register_buffer('fisher', torch.zeros(1 , self.in_channels*out_channels*kernel_size*kernel_size))
+        self.register_buffer('new_fisher', torch.zeros(1, self.in_channels*out_channels*kernel_size*kernel_size))
+        
         
     def register_hooks(self):
         self.register_full_backward_hook(self._backward_hook)
@@ -181,27 +193,40 @@ class hConv2d(Conv2d):
                 self.input_act = torch.cat((self.input_act, 
                                                         input_act[0].detach()))
         
+        
     def _backward_hook(self, module, input_grad, output_grad):
         if self.output_grad is None:
             self.output_grad = output_grad[0].detach()
         else:
             self.output_grad = torch.cat((self.output_grad, 
                                    output_grad[0].detach()))
+            
+    def save_opt_params(self):
+        self.opt_weights = self.weight.clone().detach()
+        if self.bias_used:
+            self.opt_bias = self.bias.clone().detach()
     
-    def compute_fisher(self):
+    def compute_fisher(self, batchsize, labels):
         acts = self.unfold(self.input_act).transpose(1,2)
-        print("acts: ", acts.shape)
-        grads = self.output_grad.view(self.output_grad.shape[0], 
-                                         self.output_grad.shape[1], -1)
-        print("grads: ", grads.shape)
+        grads = self.output_grad.view(self.output_grad.shape[0], self.output_grad.shape[1], -1)
         ag = grads.bmm(acts)
         ag = ag.view(self.input_act.shape[0], -1)
+        self.new_fisher += torch.sum(torch.mul(ag, ag), dim=0).view(1, -1)
         
-        print("ag: ", ag.shape)
-        self.new_fisher = torch.mm(ag, ag.t())
-        
+    def update_fisher(self, device):
+        """
+        update running average of the fisher information
+        called on task update, after all batches have been processed
+        """
+        self.fisher = self.online_lambda*self.fisher + self.new_fisher
+        #reset buffer
+        self.new_fisher = torch.zeros(1, self.in_channels*self.out_channels*self.kernel_size*self.kernel_size).to(device)    
+    
     def ewc_loss(self):
-        return 0
+        param_diff = self.weight - self.opt_weights
+        param_diff_2 = torch.mul(param_diff, param_diff).flatten().view(-1, 1)
+        loss_M = torch.mm(self.fisher, param_diff_2)
+        return torch.sum(loss_M)
            
 
 def test(model, device, testloader, criterion, permute=False, seed=0):
@@ -210,8 +235,9 @@ def test(model, device, testloader, criterion, permute=False, seed=0):
     num_datapoints = 0
     for t, (X, y) in enumerate(testloader):
         num_datapoints += y.shape[0]
+        s = X.shape
         if permute:
-            X = permute_mnist(X, seed)
+            X = permute_mnist(X, seed).reshape(s)
         X, y = X.to(device), y.to(device)
         model.set_hooks(False)
         output = model(X)

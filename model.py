@@ -14,7 +14,7 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 
 class hsequential(nn.Sequential):
-    def __init__(self, module_list, method="SGD", lr=1e-2, output_dim = 10, online_lambda = 0.9, task_weight = 0.95):
+    def __init__(self, module_list, method="SGD", lr=1e-3, output_dim = 10, online_lambda = 0.9, task_weight = 0.95):
         """
         online_lamda: weight used for computing running average of Fisher, i.e. F_i = online_lamda * F_i-1 + F_i 
         """
@@ -26,9 +26,13 @@ class hsequential(nn.Sequential):
         self.set_online_lambda(online_lambda)
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.task_weight = task_weight
+        self.batchsize = None
     
     def set_task_weight(self, task_weight):
         self.task_weight = task_weight
+        
+    def set_batchsize(self, batchsize):
+        self.batchsize = batchsize
         
     def get_device(self):
         return next(self.parameters()).device
@@ -142,15 +146,13 @@ class hsequential(nn.Sequential):
             log_probs = log_soft(output)
             weights = torch.sqrt(probs[:, label])
             loss = -torch.dot(weights, log_probs[:, label]) / np.sqrt(X.shape[0])
-            if loss > 1e5:
-                print("ffe loss: ", loss)
             loss.backward()
             X.requires_grad_(False)
             self.zero_grad()
             
         # compute current fisher estimate
         for layer in self.hmodules():
-            layer.compute_fisher()
+            layer.compute_fisher(batchsize = self.batchsize, labels = self.labels)
             
     def mc_fisher_estimate(self, X):
         """
@@ -172,7 +174,7 @@ class hsequential(nn.Sequential):
         
         # compute current fisher estimate
         for layer in self.hmodules():
-            layer.compute_fisher()
+            layer.compute_fisher(batchsize = self.batchsize, labels = 1)
         
     def update_fisher(self):
         device = self.get_device()

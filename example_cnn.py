@@ -18,7 +18,7 @@ if torch.cuda.is_available():
     device = 'cuda'
 
 trainloader, testloader = image_loader.get_dataloaders('mnist',
-                                          batch_size=100, 
+                                          batch_size=200, 
                                           subset=False, 
                                           num_workers=0)
 def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device='cpu', measure_freq=100, permute=False, seed=0):
@@ -89,21 +89,47 @@ for _, (X, _) in enumerate(trainloader):
 
 in_channel = 1
 out_channels = [10, 20]
-kernel_sizes = [5, 5]
+kernel_sizes = [3, 3]
+paddings = [1, 0]
 poolings = [True, True]
-layer_widths = [320, 50, 50, 10]
+layer_widths = [720, 100, 100, 10]
 criterion = torch.nn.CrossEntropyLoss()
 
-m = model.CNN(in_channel, out_channels, kernel_sizes, layer_widths, poolings=poolings)
-m.to(device)
+num_tasks = 5
+task_weights = [0, 0.4, 10]
+on_lamdas = [0.7]
 
-num_tasks = 1
-for task in range(num_tasks):
-    train_model(m, trainloader, testloader, epochs=1, device=device, permute=True, seed=task, method="EWC")
-    for _, (X, _) in enumerate(trainloader):
-        X = permute_mnist(X, task).reshape(-1, 1, 28, 28)
-        X = X.to(device)
-        #m.full_fisher_estimate(X)
-        m.mc_fisher_estimate(X)
-    m.update_fisher()
+for tw in task_weights:
+    for lamda in on_lamdas:
+        # reinitialize model
+        m = model.CNN(in_channel, out_channels, kernel_sizes, layer_widths, paddings = paddings, poolings=poolings)
+        m.set_task_weight(tw)
+        m.set_online_lambda(lamda)
+        m.set_batchsize(trainloader.batch_size)
 
+        for task in range(num_tasks):
+            print("EWC")
+            print("Task ", task + 1)
+            train_model(m, trainloader, testloader, epochs=3, device=device, permute=True, seed=task, method="EWC")
+            for _, (X, _) in enumerate(trainloader):
+                X = permute_mnist(X, task).reshape(-1, 1, 28, 28)
+                X = X.to(device)
+                #m.full_fisher_estimate(X)
+                m.mc_fisher_estimate(X)
+            m.update_fisher()
+            
+            # testing models on all previous tasks
+            accs_EWC = []
+            
+            for t in range(task+1):
+                print("Testerror task {}, method: {}".format(t+1, m.method))
+                accs_EWC.append(test(m, device, testloader, criterion, permute=True, seed=t))
+        
+            # plot accuracies
+            plt.figure()
+            plt.title("Test accuracy after training {} tasks with tw {} and lambda {}".format(task+1, tw, lamda))
+            plt.plot(np.arange(task+1)+1, accs_EWC, 'o', label="EWC")
+            plt.ylabel("Test accuracy in %")
+            plt.xlabel("Task")
+            plt.legend()
+            plt.savefig("cnn_mc_tw{}_l{}_tasks{}.png".format(tw, lamda, task+1))
