@@ -25,7 +25,10 @@ trainloader, testloader = dataloaders.get_dataloaders('mnist',
                                           subset=False, 
                                           num_workers=0)
 
-layer_widths = [28*28, 50, 50, 10]
+# h = "/Users/HP/Documents/GitHub/EWC/plots/FCN/"
+h = "/Users/Flo/Desktop/Studium/Info/FS22/BA/EWC/plots/FCN/"
+
+layer_widths = [28*28, 200, 200, 10]
 criterion = torch.nn.CrossEntropyLoss()
 
 m = model.FCNet(layer_widths, bias=True)
@@ -45,7 +48,7 @@ m.apply(init_params)
 
 m.to(device)
 
-def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device='cpu', measure_freq=100, permute=False, seed=0):
+def train_model(model, train_loader, test_loader, epochs=5, method='EWC', device='cpu', measure_freq=100, permute=False, seed=0):
     """
     Parameters
     ----------
@@ -98,15 +101,14 @@ def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device
 
 num_tasks = 10
 
-h = "/Users/HP/Documents/GitHub/EWC/plots/FCN/"
-
+"""
 accs_naive = []
 m.set_task_weight(0)
 for task in range(num_tasks):
     # train comparison model
     print("EWC with tw 0")
     print("Task: ", task+1)
-    train_model(m, trainloader, epochs=5, permute=True, seed=task, device=device, method='EWC')
+    train_model(m, trainloader, testloader, epochs=5, permute=True, seed=task, device=device, method='EWC')
     
     new_accs = []
     for t in range(task+1):   
@@ -114,49 +116,51 @@ for task in range(num_tasks):
         new_accs.append(test(m, device, testloader, criterion, permute=True, seed=t))
     accs_naive.append(new_accs)
     
-with open(h + "naive_accs.csv", 'a', newline='') as csvfile:
+with open(h + "naive_accs.csv", 'a') as csvfile:
     # creating a csv writer object  
     csvwriter = csv.writer(csvfile)   
     csvwriter.writerow(accs_naive)
     csvfile.close()
+"""
 
-
-task_weights = [0.1, 0.25, 0.5, 0.75, 1, 10]
+# task_weights = [1e-3, 1e-2]
+task_weights = [1e-3, 1e-2, 0.1, 0.25, 0.4, 0.75, 1, 10]
 on_lambdas = task_weights[:-1]
 
 for tw in task_weights:
     for lamda in on_lambdas:
         m.set_task_weight(tw)
         m.set_online_lambda(lamda)
+        m.set_batchsize(trainloader.batch_size)
         # reinitialize model and optimizer
         m.apply(init_params)
         m.optimizer = torch.optim.Adam(m.parameters(), lr=1e-3)
         
-        p = "MC/Bias/tw{}_lambda{}".format(tw, lamda)
+        p = "FF/Bias/tw{}_lambda{}".format(tw, lamda)
         if not Path(h+p).exists():
             Path(h+p).mkdir(parents=True)
         for task in range(num_tasks):
             # train EWC model
             print("EWC")
             print("Task: ", task+1)
-            train_model(m, trainloader, testloader, epochs=1, permute=True, seed=task, device=device, method='EWC')
+            train_model(m, trainloader, testloader, epochs=5, permute=True, seed=task, device=device, method='EWC')
             for _, (X, _) in enumerate(trainloader):
                 X = permute_mnist(X, task)
                 X = X.to(device)
-                #m.full_fisher_estimate(X)
-                m.mc_fisher_estimate(X)
+                m.full_fisher_estimate(X)
+                # m.mc_fisher_estimate(X)
             m.update_fisher()
             
             # testing models on all previous tasks
             accs_EWC = []
-            accs_SGD = []
+            accs_naive = []
             with open(h+"naive_accs.csv", "r") as csvfile:
                 csvreader = csv.reader(csvfile)
                 for row in csvreader:
                     l = []
                     for r in row:
                         l.append(float(r))
-                    accs_SGD.append(l)
+                    accs_naive.append(l)
                 
                 csvfile.close()
             
@@ -171,7 +175,7 @@ for tw in task_weights:
             plt.figure()
             plt.title("Test accuracy after training {} tasks with tw {} and lambda {}".format(task+1, tw, lamda))
             plt.plot(np.arange(task+1)+1, accs_EWC, 'o', label="EWC")
-            plt.plot(np.arange(task+1)+1, accs_naive[task], 'x', label="SGD")
+            plt.plot(np.arange(task+1)+1, accs_naive[task], 'x', label="naive")
             plt.ylabel("Test accuracy in %")
             plt.xlabel("Task")
             plt.legend()

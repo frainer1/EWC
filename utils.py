@@ -57,7 +57,7 @@ class hlinear(Linear):
         self.bias_used = bias
         
         self.register_buffer('opt_weights', torch.zeros(out_features, in_features))
-        self.register_buffer('opt_bias', torch.zeros(out_features, 1))
+        self.register_buffer('opt_bias', torch.zeros(1, out_features))
             
         self.register_buffer('fisher', torch.zeros(self.in_features, out_features))
         self.register_buffer('new_fisher', torch.zeros(self.in_features, out_features))
@@ -104,7 +104,7 @@ class hlinear(Linear):
             grads2 = torch.mul(grads, grads)
             self.new_fisher += acts2.t() @ grads2
             if self.bias_used:
-                self.new_fisher_b += torch.sum(grads2, dim=0)
+                self.new_fisher_b += torch.sum(grads2, dim=0).view(-1, 1)
                 
     
     def update_fisher(self, device):
@@ -125,8 +125,8 @@ class hlinear(Linear):
         """
         bias_loss = 0
         if self.bias_used:
-            bias_diff = self.bias - self.opt_bias
-            bias_loss = torch.mm(bias_diff, self.fisher)
+            bias_diff = self.bias.view(1, -1) - self.opt_bias
+            bias_loss = torch.mm(bias_diff, self.fisher_b)
            
         param_diff = self.weight - self.opt_weights
         param_diff_2 = torch.mul(param_diff, param_diff)
