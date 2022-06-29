@@ -132,6 +132,9 @@ class hsequential(nn.Sequential):
         """
         computes "full" fisher as opposed to MC version
         """
+        if self.task_weight == 0:
+            return None
+        
         # reset update information
         for layer in self.hmodules():
             layer.input_act = None
@@ -152,12 +155,15 @@ class hsequential(nn.Sequential):
             
         # compute current fisher estimate
         for layer in self.hmodules():
-            layer.compute_fisher(batchsize = self.batchsize, labels = self.labels)
+            layer.compute_fisher(batchsize = self.batchsize, labels = self.output_dim)
             
     def mc_fisher_estimate(self, X):
         """
         computes fisher update by drawing one label per datapoint from model distribution 
         """
+        if self.task_weight == 0:
+            return None
+        
         # reset update information
         for layer in self.hmodules():
             layer.input_act = None

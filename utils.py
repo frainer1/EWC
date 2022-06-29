@@ -55,15 +55,15 @@ class hlinear(Linear):
         self.in_features = in_features
         self.out_features = out_features   
         self.bias_used = bias
-            
+        
         self.register_buffer('opt_weights', torch.zeros(out_features, in_features))
         self.register_buffer('opt_bias', torch.zeros(out_features, 1))
-        
-        if bias:
-            self.in_features += 1 # one extra column to store fisher regarding biases
             
         self.register_buffer('fisher', torch.zeros(self.in_features, out_features))
         self.register_buffer('new_fisher', torch.zeros(self.in_features, out_features))
+        # not the most elegant, but pragmatic
+        self.register_buffer('fisher_b', torch.zeros(self.out_features, 1))
+        self.register_buffer('new_fisher_b', torch.zeros(self.out_features, 1))
         
     def register_hooks(self):
         self.register_full_backward_hook(self._backward_hook)
@@ -102,18 +102,9 @@ class hlinear(Linear):
             grads = self.output_grad[(batchsize*label):(batchsize*(label+1))]
             acts2 = torch.mul(acts, acts)
             grads2 = torch.mul(grads, grads)
+            self.new_fisher += acts2.t() @ grads2
             if self.bias_used:
-                #print("before: ", self.new_fisher.shape)
-                self.new_fisher[:self.in_features-1] += acts2.t() @ grads2
-                #print("between: ", self.new_fisher.shape)
-                self.new_fisher[self.in_features-1] += torch.sum(grads2, dim=0)/batchsize
-                #print("after: ", self.new_fisher.shape)
-                
-                #summed_grads = torch.sum(grads2, dim=0)
-                #print("grads:", grads2.shape)
-                #print("proc: ", summed_grads.shape)
-            else:
-                self.new_fisher += acts2.t() @ grads2
+                self.new_fisher_b += torch.sum(grads2, dim=0)
                 
     
     def update_fisher(self, device):
@@ -122,27 +113,25 @@ class hlinear(Linear):
         called on task update, after all batches have been processed
         """
         self.fisher = self.online_lambda*self.fisher + self.new_fisher
+        self.fisher_b = self.online_lambda*self.fisher_b + self.new_fisher_b
         #reset buffer
         self.new_fisher = torch.zeros(self.in_features, self.out_features).to(device)
+        self.new_fisher_b = torch.zeros(self.out_features, 1).to(device)
+        
         
     def ewc_loss(self):
         """
         computes and returns sum_i (F_i * (theta_i - theta_i_opt)**2)
         """
-        param_diff = self.weight - self.opt_weights
-        #if(torch.sum(param_diff) > 10):
-        #    print(self.in_features)
-        #    print("diff: ", torch.sum(param_diff))
+        bias_loss = 0
         if self.bias_used:
-            bias_diff = self.bias.view(-1, 1) - self.opt_bias
-            #print("bias:", bias_diff.shape)
-            #print("before: ", param_diff.shape)
-            param_diff = torch.cat((param_diff, bias_diff), dim=1)
-            #print("after: ", param_diff.shape)
-            
+            bias_diff = self.bias - self.opt_bias
+            bias_loss = torch.mm(bias_diff, self.fisher)
+           
+        param_diff = self.weight - self.opt_weights
         param_diff_2 = torch.mul(param_diff, param_diff)
         loss_M = torch.mul(self.fisher.t(), param_diff_2)
-        return torch.sum(loss_M)
+        return torch.sum(loss_M) + bias_loss
     
     def sgd_update(self):
         """

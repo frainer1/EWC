@@ -57,7 +57,6 @@ def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device
                 X = permute_mnist(X, seed).reshape(-1, 1, 28, 28)
             X = X.to(device)
             y = y.to(device)
-            
             if t%measure_freq == 0:
                 model.set_hooks(False)
                 loss = criterion(model(X), y)
@@ -102,7 +101,7 @@ on_lamdas = [0.7]
 for tw in task_weights:
     for lamda in on_lamdas:
         # reinitialize model
-        m = model.CNN(in_channel, out_channels, kernel_sizes, layer_widths, paddings = paddings, poolings=poolings)
+        m = model.CNN(in_channel, out_channels, kernel_sizes, layer_widths, paddings = paddings, poolings=poolings, bias=True)
         m.set_task_weight(tw)
         m.set_online_lambda(lamda)
         m.set_batchsize(trainloader.batch_size)

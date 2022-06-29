@@ -14,28 +14,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import csv
+from pathlib import Path
 
 device = 'cpu'
 if torch.cuda.is_available():
     device = 'cuda'
 
 trainloader, testloader = dataloaders.get_dataloaders('mnist',
-                                          batch_size=100, 
+                                          batch_size=200, 
                                           subset=False, 
                                           num_workers=0)
 
 layer_widths = [28*28, 50, 50, 10]
 criterion = torch.nn.CrossEntropyLoss()
 
-# EWC model
-m = model.FCNet(layer_widths, bias=False)
-
-
-# SGD model for comparison
-n = model.FCNet(layer_widths, bias=False)
+m = model.FCNet(layer_widths, bias=True)
 
 """
-initialize both networks with the same values
+initialize networks with fixed values
 
 init_params(m) taken from https://stackoverflow.com/questions/49433936/how-to-initialize-weights-in-pytorch 
 """
@@ -43,13 +39,11 @@ def init_params(m):
     torch.manual_seed(0)
     if isinstance(m, torch.nn.Linear):
         torch.nn.init.xavier_uniform_(m.weight)
-        #m.bias.data.fill_(0.01)
+        m.bias.data.fill_(0.01)
         
 m.apply(init_params)
-n.apply(init_params)
 
 m.to(device)
-n.to(device)
 
 def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device='cpu', measure_freq=100, permute=False, seed=0):
     """
@@ -104,35 +98,43 @@ def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device
 
 num_tasks = 10
 
-#task_weights = [0.1, 0.25, 0.5, 0.75, 1, 10]
-task_weights = [1]
-on_lamdas = [0.4]
-#on_lamdas = task_weights
+h = "/Users/HP/Documents/GitHub/EWC/plots/FCN/"
 
-"""
+accs_naive = []
+m.set_task_weight(0)
 for task in range(num_tasks):
     # train comparison model
-    print("SGD")
+    print("EWC with tw 0")
     print("Task: ", task+1)
-    train_model(n, trainloader, epochs=5, permute=True, seed=task, device=device, method='SGD')
+    train_model(m, trainloader, epochs=5, permute=True, seed=task, device=device, method='EWC')
     
-    accs_SGD = []
+    new_accs = []
     for t in range(task+1):   
-        print("Testerror task {}, method: {}".format(t+1, n.method))
-        accs_SGD.append(test(n, device, testloader, criterion, permute=True, seed=t))
+        print("Testerror task {}, method: {}".format(t+1, m.method))
+        new_accs.append(test(m, device, testloader, criterion, permute=True, seed=t))
+    accs_naive.append(new_accs)
     
-    with open("SGD_accs.csv", 'a') as csvfile:
-        # creating a csv writer object  
-        csvwriter = csv.writer(csvfile)
-        
-        csvwriter.writerow(accs_SGD)
-        csvfile.close()
-"""
+with open(h + "naive_accs.csv", 'a', newline='') as csvfile:
+    # creating a csv writer object  
+    csvwriter = csv.writer(csvfile)   
+    csvwriter.writerow(accs_naive)
+    csvfile.close()
+
+
+task_weights = [0.1, 0.25, 0.5, 0.75, 1, 10]
+on_lambdas = task_weights[:-1]
 
 for tw in task_weights:
-    for lamda in on_lamdas:
+    for lamda in on_lambdas:
         m.set_task_weight(tw)
         m.set_online_lambda(lamda)
+        # reinitialize model and optimizer
+        m.apply(init_params)
+        m.optimizer = torch.optim.Adam(m.parameters(), lr=1e-3)
+        
+        p = "MC/Bias/tw{}_lambda{}".format(tw, lamda)
+        if not Path(h+p).exists():
+            Path(h+p).mkdir(parents=True)
         for task in range(num_tasks):
             # train EWC model
             print("EWC")
@@ -148,7 +150,7 @@ for tw in task_weights:
             # testing models on all previous tasks
             accs_EWC = []
             accs_SGD = []
-            with open("SGD_accs.csv", "r") as csvfile:
+            with open(h+"naive_accs.csv", "r") as csvfile:
                 csvreader = csv.reader(csvfile)
                 for row in csvreader:
                     l = []
@@ -162,24 +164,15 @@ for tw in task_weights:
                 print("Testerror task {}, method: {}".format(t+1, m.method))
                 accs_EWC.append(test(m, device, testloader, criterion, permute=True, seed=t))
                 
-                print("Testerror task {}, method: {}".format(t+1, n.method))
-                print("accuracy: ", accs_SGD[task][t])
+                print("Testerror task {}, method: naive".format(t+1))
+                print("accuracy: ", accs_naive[task][t])
         
             # plot accuracies
             plt.figure()
             plt.title("Test accuracy after training {} tasks with tw {} and lambda {}".format(task+1, tw, lamda))
             plt.plot(np.arange(task+1)+1, accs_EWC, 'o', label="EWC")
-            plt.plot(np.arange(task+1)+1, accs_SGD[task], 'x', label="SGD")
+            plt.plot(np.arange(task+1)+1, accs_naive[task], 'x', label="SGD")
             plt.ylabel("Test accuracy in %")
             plt.xlabel("Task")
             plt.legend()
-            plt.savefig("mc_tw{}_l{}_tasks{}.png".format(tw, lamda, task+1))
-
-
-"""
-import matplotlib.pyplot as plt    
-f, axarr = plt.subplots(1,2)
-axarr[0].imshow(X_perm[0].view(28,28), cmap="gray")
-axarr[1].imshow(X[0].view(28,28), cmap="gray")
-np.vectorize(lambda ax:ax.axis('off'))(axarr);
-"""
+            plt.savefig(h+p+"/tasks{}.png".format(task+1))
