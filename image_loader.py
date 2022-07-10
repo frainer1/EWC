@@ -4,7 +4,6 @@
 """
 
 import torch
-import torchvision
 from torchvision import datasets, transforms
 
 def get_dataloaders(dataset, batch_size=100, subset=False, num_workers=0):
@@ -17,8 +16,9 @@ def get_dataloaders(dataset, batch_size=100, subset=False, num_workers=0):
             If 'subset'is true, the batch_size is adjusted to 1000 automatically.
     """
     transform = transforms.Compose([
+        transforms.Pad(padding=4),
         transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
+        # transforms.Normalize((0.1307,), (0.3081,))
     ])
     transform_train = transform
     transform_test = transform

@@ -99,10 +99,8 @@ class hsequential(nn.Sequential):
     def parameter_update_EWC(self, optimizer, X, y):
         optimizer.zero_grad()
         criterion = nn.CrossEntropyLoss()
-        X.requires_grad_(True)
         loss = criterion(self(X), y) + self.task_weight*self.EWC_loss()
         loss.backward()
-        X.requires_grad_(False)
         optimizer.step()
     
     def EWC_loss(self):

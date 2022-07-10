@@ -97,14 +97,16 @@ class hlinear(Linear):
         
         function is called in model.hsquential.full_fisher_estimate, grads therefore correspond to d/dw -1/batchsize * sum_x(prob(y|x) * log_prob(y|x))
         """
-        for label in range(labels):
-            acts = self.input_act[(batchsize*label):(batchsize*(label+1))]
-            grads = self.output_grad[(batchsize*label):(batchsize*(label+1))]
-            acts2 = torch.mul(acts, acts)
-            grads2 = torch.mul(grads, grads)
-            self.new_fisher += acts2.t() @ grads2
-            if self.bias_used:
-                self.new_fisher_b += torch.sum(grads2, dim=0).view(-1, 1)
+        # for label in range(labels):
+        # acts = self.input_act[(batchsize*label):(batchsize*(label+1))]
+        # grads = self.output_grad[(batchsize*label):(batchsize*(label+1))]
+        acts = self.input_act
+        grads = self.output_grad
+        acts2 = torch.mul(acts, acts)
+        grads2 = torch.mul(grads, grads)
+        self.new_fisher += acts2.t() @ grads2
+        if self.bias_used:
+            self.new_fisher_b += torch.sum(grads2, dim=0).view(-1, 1)
                 
     
     def update_fisher(self, device):
@@ -247,4 +249,53 @@ def permute_mnist(data, seed):
     h = w = 28
     indx = torch.randperm(h*w)
     return torch.index_select(data, 1, indx)
+
+def train_model(model, train_loader, test_loader, epochs=5, method='EWC', device='cpu', measure_freq=100, permute=False, seed=0, criterion= nn.CrossEntropyLoss()):
+    """
+    Parameters
+    ----------
+    model : model.FCNet
+        model to be trained
+    train_loader : torch.utils.data.DataLoader   
+    test_loader : torch.utils.data.DataLoader   
+    epochs : int, optional
+        number of epochs the model is trained. The default is 5.
+    method : string, optional
+        one of ["SGD", "mySGD", "EWC"]. Determines method used for parameter update. The default is 'SGD'.
+    device : string, optional
+        either 'cpu' or 'cuda'. The default is 'cpu'.
+    measure_freq : int, optional
+        determines how often current training loss and test accuracy are displayed, i.e. after every measure_freq number of mini-batches. The default is 100.
+    permute : boolean, optional
+        if 'True' the model is trained on permuted-mnist dataset. The default is False.
+    seed : int, optional
+        Only relevant if 'permute' is 'True'. Seed used for permutation of the pixels. The default is 0.
+
+    Returns
+    -------
+    None.
+
+    """
+    model.set_method(method)
     
+    for epoch in range(epochs):
+        print('\n\nEpoch', epoch+1)
+        for t, (X, y) in enumerate(train_loader):
+            if permute:
+                X = permute_mnist(X, seed)
+            X = X.to(device)
+            y = y.to(device)
+            
+            if t%measure_freq == 0:
+                model.set_hooks(False)
+                loss = criterion(model(X), y)
+                model.set_hooks(True)
+                
+                do_print = 1
+                if do_print:
+                    print('train loss', loss.item(), '   (mini-batch estimate)')
+            
+            # my implementation
+            model.parameter_update(X, y)
+                            
+        test(model, device, test_loader, criterion, permute, seed)

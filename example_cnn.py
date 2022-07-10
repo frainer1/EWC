@@ -21,6 +21,27 @@ trainloader, testloader = image_loader.get_dataloaders('mnist',
                                           batch_size=200, 
                                           subset=False, 
                                           num_workers=0)
+
+
+"""
+split_mnist from https://github.com/ContinualAI/colab/blob/master/notebooks/permuted_and_split_mnist.ipynb
+"""
+def split_mnist(train_x, train_y, test_x, test_y, n_splits=5):
+    """ Given the training set, split the tensors by the class label. """
+    n_classes = 10
+    if n_classes % n_splits != 0:
+        print("n_classes should be a multiple of the number of splits!")
+        raise NotImplementedError
+    class_for_split = n_classes // n_splits
+    mnist_train_test = [[],[]]  # train and test
+    for id, data_set in enumerate([(train_x, train_y), (test_x, test_y)]):
+        for i in range(n_splits):
+            start = i * class_for_split
+            end = (i + 1) * class_for_split
+            split_idxs = np.where(np.logical_and(data_set[1] >= start, data_set[1] < end))[0]
+            mnist_train_test[id].append((data_set[0][split_idxs], data_set[1][split_idxs]))
+    return mnist_train_test
+
 def train_model(model, train_loader, test_loader, epochs=5, method='SGD', device='cpu', measure_freq=100, permute=False, seed=0):
     """
     Parameters

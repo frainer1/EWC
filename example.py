@@ -79,7 +79,7 @@ def train_model(model, train_loader, test_loader, epochs=5, method='EWC', device
     
     for epoch in range(epochs):
         print('\n\nEpoch', epoch+1)
-        for t, (X, y) in enumerate(trainloader):
+        for t, (X, y) in enumerate(train_loader):
             if permute:
                 X = permute_mnist(X, seed)
             X = X.to(device)
@@ -97,7 +97,7 @@ def train_model(model, train_loader, test_loader, epochs=5, method='EWC', device
             # my implementation
             model.parameter_update(X, y)
                             
-        test(model, device, testloader, criterion, permute, seed)
+        test(model, device, test_loader, criterion, permute, seed)
 
 num_tasks = 10
 
