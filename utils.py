@@ -59,8 +59,8 @@ class hlinear(Linear):
         self.register_buffer('opt_weights', torch.zeros(out_features, in_features))
         self.register_buffer('opt_bias', torch.zeros(1, out_features))
             
-        self.register_buffer('fisher', torch.zeros(self.in_features, out_features))
-        self.register_buffer('new_fisher', torch.zeros(self.in_features, out_features))
+        self.register_buffer('fisher', torch.zeros(self.in_features, self.out_features))
+        self.register_buffer('new_fisher', torch.zeros(self.in_features, self.out_features))
         # not the most elegant, but pragmatic
         self.register_buffer('fisher_b', torch.zeros(self.out_features, 1))
         self.register_buffer('new_fisher_b', torch.zeros(self.out_features, 1))
@@ -118,7 +118,15 @@ class hlinear(Linear):
         self.new_fisher = torch.zeros(self.in_features, self.out_features).to(device)
         self.new_fisher_b = torch.zeros(self.out_features, 1).to(device)
         
-        
+    def reset_fisher(self, device):
+        """
+        resets fisher buffer when performing a grid-search
+        """
+        self.fisher = torch.zeros(self.in_features, self.out_features).to(device)
+        self.new_fisher = torch.zeros(self.in_features, self.out_features).to(device)
+        self.fisher_b = torch.zeros(self.out_features, 1).to(device)
+        self.new_fisher_b = torch.zeros(self.out_features, 1).to(device)
+    
     def ewc_loss(self):
         """
         computes and returns sum_i (F_i * (theta_i - theta_i_opt)**2)

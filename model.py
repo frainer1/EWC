@@ -188,6 +188,13 @@ class hsequential(nn.Sequential):
         for layer in self.hmodules():
             layer.update_fisher(device)
             layer.save_opt_params()
+            
+    def reset_fisher(self):
+        """
+        resets fisher buffer when performing a grid-search
+        """
+        for layer in self.hmodules():
+            layer.reset_fisher(self.get_device())
                     
                 
 def FCNet(layer_widths, bias = False, **kwargs):
