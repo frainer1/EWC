@@ -123,9 +123,8 @@ with open(h + "naive_accs.csv", 'a') as csvfile:
     csvfile.close()
 """
 
-# task_weights = [1e-3, 1e-2]
-task_weights = [1e-3, 1e-2, 0.1, 0.25, 0.4, 0.75, 1, 10]
-on_lambdas = task_weights[:-1]
+task_weights = [1e-3, 1e-2, 1e-1, 1, 1e1]
+on_lambdas = task_weights
 
 for tw in task_weights:
     for lamda in on_lambdas:
@@ -134,9 +133,10 @@ for tw in task_weights:
         m.set_batchsize(trainloader.batch_size)
         # reinitialize model and optimizer
         m.apply(init_params)
+        m.reset_fisher()
         m.optimizer = torch.optim.Adam(m.parameters(), lr=1e-3)
         
-        p = "FF/Bias/tw{}_lambda{}".format(tw, lamda)
+        p = "MC/Bias/tw{}_lambda{}".format(tw, lamda)
         if not Path(h+p).exists():
             Path(h+p).mkdir(parents=True)
         for task in range(num_tasks):
@@ -147,8 +147,8 @@ for tw in task_weights:
             for _, (X, _) in enumerate(trainloader):
                 X = permute_mnist(X, task)
                 X = X.to(device)
-                m.full_fisher_estimate(X)
-                # m.mc_fisher_estimate(X)
+                # m.full_fisher_estimate(X)
+                m.mc_fisher_estimate(X)
             m.update_fisher()
             
             # testing models on all previous tasks
@@ -171,11 +171,17 @@ for tw in task_weights:
                 print("Testerror task {}, method: naive".format(t+1))
                 print("accuracy: ", accs_naive[task][t])
         
+        
+            average_ewc = np.mean(accs_EWC)
+            average_naive = np.mean(accs_naive[task])           
+            
             # plot accuracies
             plt.figure()
             plt.title("Test accuracy after training {} tasks with tw {} and lambda {}".format(task+1, tw, lamda))
-            plt.plot(np.arange(task+1)+1, accs_EWC, 'o', label="EWC")
-            plt.plot(np.arange(task+1)+1, accs_naive[task], 'x', label="naive")
+            plt.plot(np.arange(task+1)+1, accs_EWC, 'bo', label="EWC")
+            plt.plot(np.arange(task+1)+1, accs_naive[task], 'gx', label="naive")
+            plt.plot(np.linspace(0, task+1, num=2), [average_ewc]*2, 'b--', label="average EWC")
+            plt.plot(np.linspace(0, task+1, num=2), [average_naive]*2, 'g-.', label="average naive")
             plt.ylabel("Test accuracy in %")
             plt.xlabel("Task")
             plt.legend()
