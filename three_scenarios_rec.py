@@ -47,8 +47,8 @@ for task in range(num_tasks):
     for _, (X, _) in enumerate(trainloader):
         X = permute_mnist(X, seed, w=32)
         X = X.to(device)
-        m.full_fisher_estimate(X)
-        # m.mc_fisher_estimate(X)
+        # m.full_fisher_estimate(X)
+        m.mc_fisher_estimate(X)
     m.update_fisher()
     
     # testing models on all previous tasks
