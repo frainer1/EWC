@@ -69,7 +69,8 @@ class hlinear(Linear):
         self.register_full_backward_hook(self._backward_hook)
         self.register_forward_hook(self._forward_hook)
         
-        self.forward_hook = True
+        self.forward_hook = False
+        self.backward_hook = False
     
     def _forward_hook(self, module, input_act, output_act):
         if(self.forward_hook):
@@ -80,18 +81,19 @@ class hlinear(Linear):
                                                         input_act[0].detach()))
         
     def _backward_hook(self, module, input_grad, output_grad):
-        if self.output_grad is None:
-            self.output_grad = output_grad[0].detach()
-        else:
-            self.output_grad = torch.cat((self.output_grad, 
-                                   output_grad[0].detach()))
+        if(self.backward_hook):
+            if self.output_grad is None:
+                self.output_grad = output_grad[0].detach()
+            else:
+                self.output_grad = torch.cat((self.output_grad, 
+                                       output_grad[0].detach()))
             
     def save_opt_params(self):
         self.opt_weights = self.weight.clone().detach()
         if self.bias_used:
             self.opt_bias = self.bias.clone().detach()
         
-    def compute_fisher(self, batchsize, labels):
+    def compute_fisher(self):
         """
         computes current estimate of the Fisher information
         
@@ -102,20 +104,22 @@ class hlinear(Linear):
         # grads = self.output_grad[(batchsize*label):(batchsize*(label+1))]
         acts = self.input_act
         grads = self.output_grad
-        acts2 = torch.mul(acts, acts)
-        grads2 = torch.mul(grads, grads)
+        # acts2 = torch.mul(acts, acts)
+        # grads2 = torch.mul(grads, grads)
+        acts2 = acts.pow(2)
+        grads2 = grads.pow(2)
         self.new_fisher += acts2.t() @ grads2
         if self.bias_used:
             self.new_fisher_b += torch.sum(grads2, dim=0).view(-1, 1)
                 
     
-    def update_fisher(self, device):
+    def update_fisher(self, device, num_batches):
         """
         update running average of the fisher information
         called on task update, after all batches have been processed
         """
-        self.fisher = self.online_lambda*self.fisher + self.new_fisher
-        self.fisher_b = self.online_lambda*self.fisher_b + self.new_fisher_b
+        self.fisher = self.online_lambda*self.fisher + self.new_fisher/num_batches
+        self.fisher_b = self.online_lambda*self.fisher_b + self.new_fisher_b/num_batches
         #reset buffer
         self.new_fisher = torch.zeros(self.in_features, self.out_features).to(device)
         self.new_fisher_b = torch.zeros(self.out_features, 1).to(device)
@@ -136,10 +140,11 @@ class hlinear(Linear):
         bias_loss = 0
         if self.bias_used:
             bias_diff = self.bias.view(1, -1) - self.opt_bias
-            bias_loss = torch.mm(bias_diff, self.fisher_b)
+            bias_diff2 = bias_diff.pow(2)
+            bias_loss = torch.mm(bias_diff2, self.fisher_b)
            
         param_diff = self.weight - self.opt_weights
-        param_diff_2 = torch.mul(param_diff, param_diff)
+        param_diff_2 = param_diff.pow(2)
         loss_M = torch.mul(self.fisher.t(), param_diff_2)
         return torch.sum(loss_M) + bias_loss
     
@@ -182,7 +187,8 @@ class hConv2d(Conv2d):
         self.register_full_backward_hook(self._backward_hook)
         self.register_forward_hook(self._forward_hook)
         
-        self.forward_hook = True
+        self.forward_hook = False
+        self.backward_hook = False
     
     def _forward_hook(self, module, input_act, output_act):
         if(self.forward_hook):
@@ -194,10 +200,11 @@ class hConv2d(Conv2d):
         
         
     def _backward_hook(self, module, input_grad, output_grad):
-        if self.output_grad is None:
-            self.output_grad = output_grad[0].detach()
-        else:
-            self.output_grad = torch.cat((self.output_grad, 
+        if(self.forward_hook):
+            if self.output_grad is None:
+                self.output_grad = output_grad[0].detach()
+            else:
+                self.output_grad = torch.cat((self.output_grad, 
                                    output_grad[0].detach()))
             
     def save_opt_params(self):
@@ -210,7 +217,7 @@ class hConv2d(Conv2d):
         grads = self.output_grad.view(self.output_grad.shape[0], self.output_grad.shape[1], -1)
         ag = grads.bmm(acts)
         ag = ag.view(self.input_act.shape[0], -1)
-        self.new_fisher += torch.sum(torch.mul(ag, ag), dim=0).view(1, -1)
+        self.new_fisher += torch.sum(ag.pow(2), dim=0).view(1, -1)
         
     def update_fisher(self, device):
         """
@@ -223,7 +230,7 @@ class hConv2d(Conv2d):
     
     def ewc_loss(self):
         param_diff = self.weight - self.opt_weights
-        param_diff_2 = torch.mul(param_diff, param_diff).flatten().view(-1, 1)
+        param_diff_2 = param_diff.pow(2).flatten().view(-1, 1)
         loss_M = torch.mm(self.fisher, param_diff_2)
         return torch.sum(loss_M)
            
@@ -234,13 +241,13 @@ def test(model, device, testloader, criterion, permute=False, seed=0):
     num_datapoints = 0
     for t, (X, y) in enumerate(testloader):
         num_datapoints += y.shape[0]
-        s = X.shape
+        w = X.shape[-1]
         if permute:
-            X = permute_mnist(X, seed).reshape(s)
+            X = permute_mnist(X, seed, w=w)
         X, y = X.to(device), y.to(device)
-        model.set_hooks(False)
+        model.set_hooks(forward_hook = False, backward_hook=False)
         output = model(X)
-        model.set_hooks(True)
+        model.set_hooks(forward_hook = True)
         test_loss += criterion(output, y).item() # sum up batch loss
         pred = output.max(1, keepdim=True)[1] # get the index of the max logit
         correct += pred.eq(y.view_as(pred)).sum().item()
@@ -251,14 +258,13 @@ def test(model, device, testloader, criterion, permute=False, seed=0):
         100. * correct / num_datapoints))
     return 100. * correct / num_datapoints
             
-def permute_mnist(data, seed):
-    data = data.view(-1, 28*28)
+def permute_mnist(data, seed, w = 28):
+    data = data.view(-1, w*w)
     torch.manual_seed(seed)
-    h = w = 28
-    indx = torch.randperm(h*w)
+    indx = torch.randperm(w*w)
     return torch.index_select(data, 1, indx)
 
-def train_model(model, train_loader, test_loader, epochs=5, method='EWC', device='cpu', measure_freq=100, permute=False, seed=0, criterion= nn.CrossEntropyLoss()):
+def train_model(model, train_loader, test_loader, epochs=5, method='EWC', device='cpu', measure_freq=100, permute=False, seed=0):
     """
     Parameters
     ----------
@@ -285,19 +291,20 @@ def train_model(model, train_loader, test_loader, epochs=5, method='EWC', device
 
     """
     model.set_method(method)
-    
+    criterion = nn.CrossEntropyLoss()
     for epoch in range(epochs):
         print('\n\nEpoch', epoch+1)
         for t, (X, y) in enumerate(train_loader):
+            w = X.shape[-1]
             if permute:
-                X = permute_mnist(X, seed)
+                X = permute_mnist(X, seed, w=w)
             X = X.to(device)
             y = y.to(device)
             
             if t%measure_freq == 0:
-                model.set_hooks(False)
+                model.set_hooks(forward_hook=False)
                 loss = criterion(model(X), y)
-                model.set_hooks(True)
+                model.set_hooks(forward_hook=True)
                 
                 do_print = 1
                 if do_print:
@@ -306,4 +313,4 @@ def train_model(model, train_loader, test_loader, epochs=5, method='EWC', device
             # my implementation
             model.parameter_update(X, y)
                             
-        test(model, device, test_loader, criterion, permute, seed)
+        test(model, device, test_loader, criterion, permute=permute, seed=seed)

@@ -26,13 +26,14 @@ class hsequential(nn.Sequential):
         self.set_online_lambda(online_lambda)
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.task_weight = task_weight
-        self.batchsize = None
     
+        self.forward_hook = None
+        self.backward_hook = None
+        
+        self.num_batches = 0
+        
     def set_task_weight(self, task_weight):
         self.task_weight = task_weight
-        
-    def set_batchsize(self, batchsize):
-        self.batchsize = batchsize
         
     def get_device(self):
         return next(self.parameters()).device
@@ -58,8 +59,6 @@ class hsequential(nn.Sequential):
             
     def set_output_dim(self, output_dim):
         self.output_dim = output_dim
-        for layer in self.hmodules():
-            layer.labels = output_dim
         
     def parameter_update(self, X, y):
         if self.method == "mySGD":
@@ -76,7 +75,7 @@ class hsequential(nn.Sequential):
     
     def optim_step(self, optimizer, X, y):
         """
-        optimizer step for torch.optim.SGD
+        optimizer step for torch.optim
         """
         optimizer.zero_grad()
         criterion = nn.CrossEntropyLoss()
@@ -109,12 +108,17 @@ class hsequential(nn.Sequential):
             loss += layer.ewc_loss()
         return loss
     
-    def set_hooks(self, forward_hook=None):
+    def set_hooks(self, forward_hook=None, backward_hook = None):
         if forward_hook is not None:
             self.forward_hook = forward_hook
+            
+        if backward_hook is not None:
+            self.backward_hook = backward_hook
+            
         for layer in self.hmodules():
             layer.forward_hook = self.forward_hook
-    
+            layer.backward_hook = self.backward_hook
+            
     def hmodules(self):
         """
         returns a list of all hooked layers in the model
@@ -130,8 +134,11 @@ class hsequential(nn.Sequential):
         """
         computes "full" fisher as opposed to MC version
         """
+        
         if self.task_weight == 0:
             return None
+        
+        self.set_hooks(forward_hook=True, backward_hook=True)
         
         # reset update information
         for layer in self.hmodules():
@@ -153,7 +160,10 @@ class hsequential(nn.Sequential):
             
         # compute current fisher estimate
         for layer in self.hmodules():
-            layer.compute_fisher(batchsize = self.batchsize, labels = self.output_dim)
+            layer.compute_fisher()
+            
+        self.set_hooks(forward_hook=False, backward_hook=False)
+        self.num_batches += 1
             
     def mc_fisher_estimate(self, X):
         """
@@ -161,6 +171,8 @@ class hsequential(nn.Sequential):
         """
         if self.task_weight == 0:
             return None
+        
+        self.set_hooks(forward_hook=True, backward_hook=True)
         
         # reset update information
         for layer in self.hmodules():
@@ -178,15 +190,20 @@ class hsequential(nn.Sequential):
         
         # compute current fisher estimate
         for layer in self.hmodules():
-            layer.compute_fisher(batchsize = self.batchsize, labels = 1)
+            layer.compute_fisher()
+            
+        self.set_hooks(forward_hook=False, backward_hook=False)
+        self.num_batches += 1
         
     def update_fisher(self):
         device = self.get_device()
         # update fisher estimate and save optimal parameters
         for layer in self.hmodules():
-            layer.update_fisher(device)
+            layer.update_fisher(device, self.num_batches)
             layer.save_opt_params()
-            
+        
+        self.num_batches = 0
+        
     def reset_fisher(self):
         """
         resets fisher buffer when performing a grid-search
